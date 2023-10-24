@@ -4,10 +4,7 @@ import time
 import subprocess
 from io import BytesIO
 from PIL import Image
-try:
-    import picamera
-except ImportError:
-    picamera = None  # picamera is optional
+import picamera2 # picamera is optional
 from pibooth.language import get_translated_text
 from pibooth.camera.base import BaseCamera
 
@@ -18,20 +15,9 @@ def get_rpi_camera_proxy(port=None):
 
     :param port: look on given port number
     :type port: int
-    """
-    if not picamera:
-        return None  # picamera is not installed
-    try:
-        process = subprocess.Popen(['vcgencmd', 'get_camera'],
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, _stderr = process.communicate()
-        if stdout and u'detected=1' in stdout.decode('utf-8'):
-            if port is not None:
-                return picamera.PiCamera(camera_num=port)
-            return picamera.PiCamera()
-    except OSError:
-        pass
-    return None
+    """ # picamera is not installed
+    return picamera2.Picamera2()
+
 
 
 class RpiCamera(BaseCamera):
@@ -39,21 +25,11 @@ class RpiCamera(BaseCamera):
     """Camera management
     """
 
-    if picamera:
-        IMAGE_EFFECTS = list(picamera.PiCamera.IMAGE_EFFECTS.keys())
-    else:
-        IMAGE_EFFECTS = []
 
     def _specific_initialization(self):
         """Camera initialization.
         """
-        self._cam.framerate = 15  # Slower is necessary for high-resolution
-        self._cam.video_stabilization = True
-        self._cam.vflip = False
-        self._cam.hflip = self.capture_flip
-        self._cam.resolution = self.resolution
-        self._cam.iso = self.preview_iso
-        self._cam.rotation = self.preview_rotation
+        self._cam.configure(self._cam.create_preview_configuration())
 
     def _show_overlay(self, text, alpha):
         """Add an image as an overlay.
@@ -88,7 +64,7 @@ class RpiCamera(BaseCamera):
     def preview(self, window, flip=True):
         """Display a preview on the given Rect (flip if necessary).
         """
-        if self._cam.preview is not None:
+        if self._cam is not None:
             # Already running
             return
 
@@ -111,7 +87,7 @@ class RpiCamera(BaseCamera):
         timeout = int(timeout)
         if timeout < 1:
             raise ValueError("Start time shall be greater than 0")
-        if not self._cam.preview:
+        if not self._cam:
             raise EnvironmentError("Preview shall be started first")
 
         while timeout > 0:
@@ -135,12 +111,9 @@ class RpiCamera(BaseCamera):
         self._cam.stop_preview()
         self._window = None
 
-    def capture(self, effect=None):
+    def capture(self,effect):
         """Capture a new picture in a file.
         """
-        effect = str(effect).lower()
-        if effect not in self.IMAGE_EFFECTS:
-            raise ValueError("Invalid capture effect '{}' (choose among {})".format(effect, self.IMAGE_EFFECTS))
 
         try:
             if self.capture_iso != self.preview_iso:
@@ -150,9 +123,9 @@ class RpiCamera(BaseCamera):
 
             stream = BytesIO()
             self._cam.image_effect = effect
-            self._cam.capture(stream, format='jpeg')
-
+            self._cam.capture_file(stream, format='jpeg')
             if self.capture_iso != self.preview_iso:
+                
                 self._cam.iso = self.preview_iso
             if self.capture_rotation != self.preview_rotation:
                 self._cam.rotation = self.preview_rotation
@@ -160,7 +133,6 @@ class RpiCamera(BaseCamera):
             self._captures.append(stream)
         finally:
             self._cam.image_effect = 'none'
-
         self._hide_overlay()  # If stop_preview() has not been called
 
     def quit(self):
